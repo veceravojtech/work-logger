@@ -317,91 +317,11 @@ def main():
             print("Exiting due to Toggl script error.")
             sys.exit(1)
 
-    # Step 4: Run comparison script
+    # Inform the user that they can run the comparison manually
     if script_choice != 4 and (script_choice == 3 or (script_choice == 1 and os.path.exists(toggl_output_file)) or (script_choice == 2 and os.path.exists(gitlab_output_file))):
-        print_header("Running Comparison Script")
-
-        compare_command = [
-            "python3", compare_script,
-            "compare",
-            gitlab_output_file,
-            toggl_output_file,
-            "--generate-import"
-        ]
-
-        success, _ = run_command(
-            compare_command,
-            success_message="Comparison completed successfully",
-            error_message="Failed to compare GitLab and Toggl data"
-        )
-
-        if not success:
-            print("Exiting due to comparison script error.")
-            sys.exit(1)
-
-        # Step 5: Check for entries to import and wait for confirmation
-        print("\nComparison results are available in the following files:")
-        print(f"- HTML report: {os.path.join(script_dir, 'compare/result/missing_entries.html')}")
-        print(f"- Import data: {os.path.join(script_dir, 'compare/result/toggl_import.json')}")
-
-        import_file = os.path.join(script_dir, "compare/result/toggl_import.json")
-
-        # Check if the import file exists and has entries
-        try:
-            with open(import_file, 'r') as f:
-                import_data = json.load(f)
-                entries = import_data.get('entries', [])
-
-            if not entries:
-                print("\nNo entries to import. Skipping import step.")
-            else:
-                print(f"\nFound {len(entries)} entries to import.")
-
-                confirm = input("\nDo you want to import the missing entries to Toggl? (y/n): ")
-
-                if confirm.lower() == 'y':
-                    # Step 6: Import data to Toggl
-                    print_header("Importing Data to Toggl")
-
-                    # Get project ID (optional)
-                    print("\nAvailable projects:")
-                    projects_command = [
-                        "python3", toggl_script,
-                        "projects"
-                    ]
-
-                    run_command(projects_command)
-
-                    project_id = input("\nEnter project ID to use for import (leave empty to use project from import file): ")
-
-                    import_command = [
-                        "python3", toggl_script,
-                        "import",
-                        "--file", import_file
-                    ]
-
-                    if project_id:
-                        import_command.extend(["--project", project_id])
-
-                    success, _ = run_command(
-                        import_command,
-                        success_message="Data imported to Toggl successfully",
-                        error_message="Failed to import data to Toggl"
-                    )
-
-                    if success:
-                        print("\n🎉 Workflow completed successfully!")
-                    else:
-                        print("\n❌ Workflow completed with errors during import.")
-                else:
-                    print("\nImport cancelled. Workflow completed without importing data.")
-
-        except (FileNotFoundError, json.JSONDecodeError) as e:
-            print(f"Error reading import file: {e}")
-            print("Skipping import step.")
-    else:
-        print("\nSkipping comparison step as one of the required files is missing.")
-        print("Workflow completed.")
+        print("\nGitLab and/or Toggl data has been successfully retrieved.")
+        print("To compare the data and find missing entries, run the workflow again and select 'Compare only'.")
+        print("\nWorkflow completed.")
 
 if __name__ == "__main__":
     main()
