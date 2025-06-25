@@ -1,0 +1,6 @@
+#!/usr/bin/env python3
+
+# GitLab authentication configuration
+# Copy this file to auth.py and update with your credentials
+GITLAB_URL = "https://gitlab.example.com/"
+GITLAB_TOKEN = "your_gitlab_personal_access_token"

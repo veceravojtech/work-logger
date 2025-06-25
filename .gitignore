@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Authentication files
+gitlab/auth.py
+toggle/auth.py
+
+# Virtual Environment
+venv/
+ENV/
+gitlab_venv/
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Output files
+*.log
+*.json
+*.html
+/compare/result
