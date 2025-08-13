@@ -84,11 +84,8 @@ def run_command(command, success_message=None, error_message=None):
 
         return False, e.stdout if e.stdout else ""
 
-def main():
-    """Main function to run the workflow."""
-    clear_screen()
-    print_header("GitLab-Toggl Workflow")
-
+def run_workflow():
+    """Run the workflow operations."""
     # Define paths
     script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     gitlab_script = os.path.join(script_dir, "gitlab/gitlab_history.py")
@@ -98,13 +95,12 @@ def main():
     # Step 1: Ask for current or previous month
     month_choice = get_user_choice(
         "Select the month for data processing:",
-        ["Current month", "Previous month", "Exit"]
+        ["Current month", "Previous month", "Return to Main Menu"]
     )
 
-    # Exit if requested
+    # Return to main menu if requested
     if month_choice == 3:
-        print("Exiting workflow.")
-        sys.exit(0)
+        return
 
     month_flag = "--current-month" if month_choice == 1 else "--previous-month"
     month_name = "current" if month_choice == 1 else "previous"
@@ -112,13 +108,12 @@ def main():
     # Step 2: Ask whether to run GitLab or Toggl script
     script_choice = get_user_choice(
         "Select the script to run:",
-        ["GitLab history", "Toggl activity", "Both", "Compare only", "Import JSON", "Exit"]
+        ["GitLab history", "Toggl activity", "Both", "Compare only", "Import JSON", "Return to Main Menu"]
     )
 
-    # Exit if requested
+    # Return to main menu if requested
     if script_choice == 6:
-        print("Exiting workflow.")
-        sys.exit(0)
+        return
 
     gitlab_output_file = os.path.join(script_dir, f"gitlab/gitlab_{month_name}_month.json")
     toggl_output_file = os.path.join(script_dir, f"toggle/toggl_{month_name}_month.json")
@@ -133,7 +128,8 @@ def main():
         if not os.path.exists(import_file):
             print(f"Error: Import file not found: {import_file}")
             print("Please run the comparison script first to generate the import file.")
-            sys.exit(1)
+            input("\nPress Enter to return to main menu...")
+            return
 
         # Check if the import file has entries
         try:
@@ -142,8 +138,9 @@ def main():
                 entries = import_data.get('entries', [])
 
             if not entries:
-                print("No entries to import. Exiting.")
-                sys.exit(0)
+                print("No entries to import. Returning to main menu.")
+                input("\nPress Enter to return to main menu...")
+                return
             else:
                 print(f"Found {len(entries)} entries to import.")
 
@@ -177,10 +174,13 @@ def main():
                     print("\n🎉 Workflow completed successfully!")
                 else:
                     print("\n❌ Workflow completed with errors during import.")
+                
+                input("\nPress Enter to return to main menu...")
 
         except (FileNotFoundError, json.JSONDecodeError) as e:
             print(f"Error reading import file: {e}")
-            sys.exit(1)
+            input("\nPress Enter to return to main menu...")
+            return
 
     elif script_choice == 4:  # Compare only
         print_header("Running Comparison Script")
@@ -189,12 +189,14 @@ def main():
         if not os.path.exists(gitlab_output_file):
             print(f"Error: GitLab output file not found: {gitlab_output_file}")
             print("Please run the GitLab history script first to generate the output file.")
-            sys.exit(1)
+            input("\nPress Enter to return to main menu...")
+            return
 
         if not os.path.exists(toggl_output_file):
             print(f"Error: Toggl output file not found: {toggl_output_file}")
             print("Please run the Toggl activity script first to generate the output file.")
-            sys.exit(1)
+            input("\nPress Enter to return to main menu...")
+            return
 
         # Run comparison script
         compare_command = [
@@ -212,8 +214,9 @@ def main():
         )
 
         if not success:
-            print("Exiting due to comparison script error.")
-            sys.exit(1)
+            print("Comparison script failed.")
+            input("\nPress Enter to return to main menu...")
+            return
 
         # Check for entries to import and wait for confirmation
         print("\nComparison results are available in the following files:")
@@ -275,6 +278,8 @@ def main():
         except (FileNotFoundError, json.JSONDecodeError) as e:
             print(f"Error reading import file: {e}")
             print("Skipping import step.")
+        
+        input("\nPress Enter to return to main menu...")
 
     elif script_choice in [1, 3]:  # GitLab or Both
         print_header("Running GitLab History Script")
@@ -293,8 +298,9 @@ def main():
         )
 
         if not success:
-            print("Exiting due to GitLab script error.")
-            sys.exit(1)
+            print("GitLab script failed.")
+            input("\nPress Enter to return to main menu...")
+            return
 
     if script_choice in [2, 3]:  # Toggl or Both
         print_header("Running Toggl Activity Script")
@@ -314,14 +320,33 @@ def main():
         )
 
         if not success:
-            print("Exiting due to Toggl script error.")
-            sys.exit(1)
+            print("Toggl script failed.")
+            input("\nPress Enter to return to main menu...")
+            return
 
     # Inform the user that they can run the comparison manually
     if script_choice != 4 and (script_choice == 3 or (script_choice == 1 and os.path.exists(toggl_output_file)) or (script_choice == 2 and os.path.exists(gitlab_output_file))):
         print("\nGitLab and/or Toggl data has been successfully retrieved.")
         print("To compare the data and find missing entries, run the workflow again and select 'Compare only'.")
         print("\nWorkflow completed.")
+        input("\nPress Enter to return to main menu...")
+
+def main():
+    """Main menu loop function."""
+    while True:
+        clear_screen()
+        print_header("GitLab-Toggl Workflow - Main Menu")
+        
+        choice = get_user_choice(
+            "Select an option:",
+            ["Run Workflow", "Exit"]
+        )
+        
+        if choice == 1:
+            run_workflow()
+        elif choice == 2:
+            print("Exiting GitLab-Toggl Workflow. Goodbye!")
+            sys.exit(0)
 
 if __name__ == "__main__":
     main()
