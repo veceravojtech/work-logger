@@ -22,6 +22,7 @@ var/
 
 # Authentication files
 gitlab/auth.py
+redmine/auth.py
 toggle/auth.py
 
 # Virtual Environment

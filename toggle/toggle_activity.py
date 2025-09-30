@@ -352,6 +352,14 @@ def import_from_gitlab(api_token=None, workspace_id=None, import_file=None, proj
         print("Please provide a path to a GitLab activity file or Toggl import file in JSON format.")
         sys.exit(1)
 
+    # Get projects for name lookup
+    headers = get_auth_header(api_token)
+    projects_url = f"{TOGGL_API_URL}/workspaces/{workspace_id}/projects"
+    projects_response = requests.get(projects_url, headers=headers)
+    projects_response.raise_for_status()
+    projects_by_name = {project["name"]: project["id"] for project in projects_response.json()}
+    projects_by_id = {project["id"]: project["name"] for project in projects_response.json()}
+
     try:
         # Read import data
         with open(import_file, 'r') as f:
@@ -375,7 +383,7 @@ def import_from_gitlab(api_token=None, workspace_id=None, import_file=None, proj
                 description = entry.get("description", "")
                 project_name = entry.get("project_name", "")
 
-                # Skip entries without description or project
+                # Skip entries without description
                 if not description:
                     continue
 
@@ -398,12 +406,18 @@ def import_from_gitlab(api_token=None, workspace_id=None, import_file=None, proj
                 # Get tags
                 tags = entry.get("tags", ["toggl-import"])
 
+                # Determine project ID: use project_id parameter, or lookup by project_name
+                entry_project_id = project_id
+                if not entry_project_id and project_name and project_name in projects_by_name:
+                    entry_project_id = projects_by_name[project_name]
+                    print(f"Using project '{project_name}' (ID: {entry_project_id})")
+
                 # Create Toggl entry
                 add_toggl_entry(
                     api_token=api_token,
                     workspace_id=workspace_id,
                     description=description,
-                    project_id=project_id,
+                    project_id=entry_project_id,
                     start_time=start_time,
                     duration=duration,
                     tags=tags

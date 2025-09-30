@@ -41,6 +41,90 @@ def load_json_file(file_path):
         print(f"Error loading {file_path}: {str(e)}")
         sys.exit(1)
 
+def load_and_merge_redmine_data(redmine_file):
+    """
+    Load Redmine data and merge entries with the same issue ID on the same day.
+    Sum the hours for merged tasks.
+
+    Args:
+        redmine_file (str): Path to Redmine JSON file
+
+    Returns:
+        dict: Processed Redmine data with merged entries
+    """
+    redmine_data = load_json_file(redmine_file)
+
+    # Group entries by date and issue_id
+    entries_by_date_issue = defaultdict(lambda: {
+        'entries': [],
+        'total_hours': 0,
+        'project': None,
+        'issue_url': None,
+        'activity_types': set()
+    })
+
+    for entry in redmine_data.get('entries', []):
+        date = entry.get('date')
+        issue_id = entry.get('issue_id')
+
+        if not date or not issue_id:
+            continue
+
+        key = (date, issue_id)
+        entries_by_date_issue[key]['entries'].append(entry)
+        entries_by_date_issue[key]['total_hours'] += entry.get('hours', 0)
+
+        # Keep first project and issue_url
+        if not entries_by_date_issue[key]['project']:
+            entries_by_date_issue[key]['project'] = entry.get('project')
+        if not entries_by_date_issue[key]['issue_url']:
+            entries_by_date_issue[key]['issue_url'] = entry.get('issue_url')
+
+        # Collect activity types
+        if entry.get('activity'):
+            entries_by_date_issue[key]['activity_types'].add(entry.get('activity'))
+
+    # Create merged entries
+    merged_entries = []
+    for (date, issue_id), data in entries_by_date_issue.items():
+        # Combine comments from all entries
+        all_comments = []
+        is_synthetic = False
+
+        for entry in data['entries']:
+            if entry.get('is_synthetic'):
+                is_synthetic = True
+            if entry.get('comments'):
+                all_comments.append(entry.get('comments'))
+
+        merged_entry = {
+            'date': date,
+            'issue_id': issue_id,
+            'issue_url': data['issue_url'],
+            'project': data['project'],
+            'hours': data['total_hours'],
+            'hours_formatted': format_hours_from_decimal(data['total_hours']),
+            'activity_types': list(data['activity_types']),
+            'entry_count': len(data['entries']),
+            'comments': ' | '.join(all_comments) if all_comments else '',
+            'is_synthetic': is_synthetic
+        }
+        merged_entries.append(merged_entry)
+
+    return {
+        'user': redmine_data.get('user', {}),
+        'period': redmine_data.get('period', {}),
+        'total_hours': redmine_data.get('total_hours', {}),
+        'statistics': redmine_data.get('statistics', {}),
+        'entries': merged_entries
+    }
+
+def format_hours_from_decimal(hours):
+    """Format decimal hours as 'Xh Ym'."""
+    total_minutes = int(round(hours * 60))
+    h, m = divmod(total_minutes, 60)
+    return f"{h}h {m}m"
+
 def generate_side_by_side_html(original_toggl_data, updated_toggl_data):
     """
     Generate a side-by-side comparison HTML showing original and updated Toggl records.
@@ -657,7 +741,8 @@ def generate_html_output(final_output):
                     <th>Time</th>
                     <th>Task</th>
                     <th>Project</th>
-                    <th>Action</th>
+                    <th>Action/Hours</th>
+                    <th>Source</th>
                     <th>Status</th>
                 </tr>
             </thead>
@@ -688,10 +773,18 @@ def generate_html_output(final_output):
                     row_class = 'toggl-only-row'
                     status_text = 'Toggl Only'
 
-                # For Toggl-only entries, show duration instead of action
+                # Determine source and action/hours display
+                source = entry.get('source', 'gitlab').capitalize()
+
+                # For Toggl-only entries, show duration
                 if entry['status'] == 'toggl-only' and 'duration_formatted' in entry:
                     action_or_duration = f"{entry.get('duration_formatted', '')}"
                     action_html = action_or_duration
+                # For Redmine entries, show hours
+                elif entry.get('source') == 'redmine' and 'details' in entry and 'hours_formatted' in entry['details']:
+                    hours_formatted = entry['details']['hours_formatted']
+                    action = entry.get('action', '')
+                    action_html = f'<span class="action-tag">{action}</span><br>{hours_formatted}'
                 else:
                     action_or_duration = entry.get('action', 'No action')
                     action_html = f'<span class="action-tag">{action_or_duration}</span>'
@@ -702,6 +795,7 @@ def generate_html_output(final_output):
                     <td>{task_desc}</td>
                     <td>{entry.get('project', 'No project')}</td>
                     <td>{action_html}</td>
+                    <td>{source}</td>
                     <td>{status_text}</td>
                 </tr>
 '''
@@ -772,7 +866,7 @@ def generate_squashed_import_data(missing_entries):
                 'description': description,
                 'start': first_entry['date'],  # Use the date of the first entry
                 'duration': duration,
-                'project_name': first_entry['project'],
+                'project_name': 'Previo',
                 'tags': ['gitlab-import', 'squashed']
             }
 
@@ -796,7 +890,7 @@ def generate_import_json(squashed_entries, period):
         'entries': squashed_entries
     }
 
-def compare_entries(gitlab_file, toggl_file, output_file=None, output_format='json', comparison_mode=None, original_toggl_file=None, generate_import=False):
+def compare_entries(gitlab_file, toggl_file, output_file=None, output_format='json', comparison_mode=None, original_toggl_file=None, generate_import=False, redmine_file=None):
     """
     Compare GitLab and Toggl entries to find missing Toggl entries.
 
@@ -854,6 +948,16 @@ def compare_entries(gitlab_file, toggl_file, output_file=None, output_format='js
     else:
         gitlab_data = load_json_file(gitlab_file)
 
+    # Load and merge Redmine data if provided
+    redmine_data = None
+    if redmine_file:
+        try:
+            redmine_data = load_and_merge_redmine_data(redmine_file)
+            print(f"Loaded Redmine data: {len(redmine_data.get('entries', []))} merged entries")
+        except Exception as e:
+            print(f"Warning: Could not load Redmine data: {str(e)}")
+            redmine_data = None
+
     # Group GitLab events by date
     gitlab_events_by_date = defaultdict(list)
     for event in gitlab_data.get('events', []):
@@ -873,8 +977,39 @@ def compare_entries(gitlab_file, toggl_file, output_file=None, output_format='js
             'action': event.get('action', ''),
             'project': event.get('project', ''),
             'task_number': task_number,
-            'details': event.get('details', {})
+            'details': event.get('details', {}),
+            'source': 'gitlab'
         })
+
+    # Add Redmine entries to the events
+    if redmine_data:
+        for entry in redmine_data.get('entries', []):
+            date = entry.get('date', '')
+            task_number = str(entry.get('issue_id', ''))
+
+            if not task_number:
+                continue
+
+            # Format the action/activity display
+            if entry.get('entry_count', 1) > 1:
+                action = f"{', '.join(entry.get('activity_types', ['Activity']))} ({entry.get('entry_count')} activities)"
+            else:
+                action = ', '.join(entry.get('activity_types', ['Activity']))
+
+            gitlab_events_by_date[date].append({
+                'date': f"{date} 12:00:00",  # Add time component
+                'action': action,
+                'project': entry.get('project', ''),
+                'task_number': task_number,
+                'details': {
+                    'target': f"#{task_number}",
+                    'hours': entry.get('hours', 0),
+                    'hours_formatted': entry.get('hours_formatted', ''),
+                    'is_synthetic': entry.get('is_synthetic', False),
+                    'comments': entry.get('comments', '')
+                },
+                'source': 'redmine'
+            })
 
     # Group Toggl entries by date
     toggl_entries_by_date = defaultdict(list)
@@ -909,14 +1044,14 @@ def compare_entries(gitlab_file, toggl_file, output_file=None, output_format='js
     # Track which Toggl entries have been matched
     matched_toggl_entries = set()
 
-    # First, process GitLab events and find missing/matched entries
+    # First, process GitLab/Redmine events and find missing/matched entries
     for date, gitlab_events in gitlab_events_by_date.items():
         toggl_entries = toggl_entries_by_date.get(date, [])
 
         # Get all task numbers logged in Toggl for this date
         toggl_task_numbers = set(entry['task_number'] for entry in toggl_entries)
 
-        # Process each GitLab event
+        # Process each GitLab/Redmine event
         for event in gitlab_events:
             # Create a base entry
             entry = {
@@ -924,21 +1059,41 @@ def compare_entries(gitlab_file, toggl_file, output_file=None, output_format='js
                 'description': f"#{event['task_number']}",
                 'project': event['project'],
                 'action': event['action'],
-                'details': event['details']
+                'details': event['details'],
+                'source': event.get('source', 'gitlab')
             }
 
-            # Check if this task is already logged in Toggl
-            if event['task_number'] in toggl_task_numbers:
-                # It's a matched entry
-                matched_entries.append(entry)
+            # Special handling for Redmine entries - they represent actual time and should always be imported
+            if event.get('source') == 'redmine':
+                # Redmine entries are always "missing" for import purposes
+                # But we still show them as matched in the HTML if Toggl has an entry for that issue
+                if event['task_number'] in toggl_task_numbers:
+                    # Show as matched in HTML
+                    matched_entries.append(entry)
+                    # But also add to missing for import
+                    missing_entries.append(entry.copy())
 
-                # Mark this task number as matched for this date
-                for toggl_entry in toggl_entries:
-                    if toggl_entry['task_number'] == event['task_number']:
-                        matched_toggl_entries.add((date, toggl_entry['task_number'], toggl_entry['date']))
+                    # Mark as matched
+                    for toggl_entry in toggl_entries:
+                        if toggl_entry['task_number'] == event['task_number']:
+                            matched_toggl_entries.add((date, toggl_entry['task_number'], toggl_entry['date']))
+                else:
+                    # Not in Toggl at all
+                    missing_entries.append(entry)
             else:
-                # It's a missing entry
-                missing_entries.append(entry)
+                # GitLab events - normal matching logic
+                # Check if this task is already logged in Toggl
+                if event['task_number'] in toggl_task_numbers:
+                    # It's a matched entry
+                    matched_entries.append(entry)
+
+                    # Mark this task number as matched for this date
+                    for toggl_entry in toggl_entries:
+                        if toggl_entry['task_number'] == event['task_number']:
+                            matched_toggl_entries.add((date, toggl_entry['task_number'], toggl_entry['date']))
+                else:
+                    # It's a missing entry
+                    missing_entries.append(entry)
 
     # Now find Toggl-only entries (entries in Toggl that don't have corresponding GitLab activities)
     for toggl_entry in all_toggl_entries:
@@ -974,16 +1129,28 @@ def compare_entries(gitlab_file, toggl_file, output_file=None, output_format='js
         if 'target' in entry['details'] and entry['details']['target']:
             description = entry['details']['target']
 
-        # Default duration (30 minutes)
-        duration = 30 * 60
+        # Determine duration based on source
+        if entry.get('source') == 'redmine' and 'hours' in entry.get('details', {}):
+            # Use actual hours from Redmine (convert to seconds)
+            duration = int(entry['details']['hours'] * 3600)
+            tags = ['redmine-import']
+            # Add synthetic tag if applicable
+            if entry.get('details', {}).get('is_synthetic'):
+                tags.append('auto-generated')
+            else:
+                tags.append('logged')
+        else:
+            # Default duration for GitLab (30 minutes)
+            duration = 30 * 60
+            tags = ['gitlab-import', entry['action'].lower().replace(' ', '-')]
 
         # Create entry for Toggl import
         toggl_entry = {
             'description': description,
             'start': entry['date'],
             'duration': duration,
-            'project_name': entry['project'],
-            'tags': ['gitlab-import', entry['action'].lower().replace(' ', '-')]
+            'project_name': 'Previo',
+            'tags': tags
         }
         toggl_import_data.append(toggl_entry)
 
@@ -1006,8 +1173,40 @@ def compare_entries(gitlab_file, toggl_file, output_file=None, output_format='js
 
     # Generate import file if requested
     if generate_import:
-        # Generate squashed import data
-        squashed_entries = generate_squashed_import_data(missing_entries)
+        # Use the toggl_import_data which already has proper durations for Redmine entries
+        # Group entries by date and task number for squashing
+        entries_by_date_task = defaultdict(list)
+        for entry in toggl_import_data:
+            # Extract task number from description
+            task_number = extract_task_number(entry['description'])
+            date = get_date_from_entry(entry['start'])
+
+            if task_number:
+                key = (date, task_number)
+                entries_by_date_task[key].append(entry)
+
+        # Create squashed entries
+        squashed_entries = []
+        for (date, task_number), entries in entries_by_date_task.items():
+            # Sum durations for all entries on same date/task
+            total_duration = sum(e['duration'] for e in entries)
+
+            # Use first entry as template
+            first_entry = entries[0]
+
+            # Merge tags from all entries
+            all_tags = set()
+            for e in entries:
+                all_tags.update(e.get('tags', []))
+
+            squashed_entry = {
+                'description': first_entry['description'],
+                'start': first_entry['start'],
+                'duration': total_duration,
+                'project_name': 'Previo',
+                'tags': sorted(list(all_tags))
+            }
+            squashed_entries.append(squashed_entry)
 
         # Generate import JSON
         import_data = generate_import_json(squashed_entries, {
@@ -1022,6 +1221,7 @@ def compare_entries(gitlab_file, toggl_file, output_file=None, output_format='js
         with open(import_file, 'w') as f:
             json.dump(import_data, f, indent=2)
         print(f"Import data written to {import_file}")
+        print(f"  Total entries: {len(squashed_entries)} (squashed from {len(toggl_import_data)})")
 
     # Handle side-by-side comparison mode
     if comparison_mode == 'side-by-side' and original_toggl_file:
@@ -1083,11 +1283,14 @@ def main():
     subparsers = parser.add_subparsers(dest='mode', help='Operation mode')
 
     # Parser for standard comparison mode
-    compare_parser = subparsers.add_parser('compare', help='Compare GitLab and Toggl entries')
+    compare_parser = subparsers.add_parser('compare', help='Compare GitLab/Redmine and Toggl entries')
     compare_parser.add_argument('gitlab_file',
                         help='Path to GitLab JSON file')
     compare_parser.add_argument('toggl_file',
                         help='Path to Toggl JSON file')
+    compare_parser.add_argument('--redmine', '-r',
+                        dest='redmine_file',
+                        help='Path to Redmine JSON file (optional)')
     compare_parser.add_argument('--output', '-o',
                         help='Path to output file. If not provided, saves to compare/result directory.')
     compare_parser.add_argument('--format', '-f',
@@ -1137,7 +1340,8 @@ def main():
             toggl_file=args.toggl_file,
             output_file=args.output,
             output_format=args.format,
-            generate_import=args.generate_import
+            generate_import=args.generate_import,
+            redmine_file=args.redmine_file
         )
     # Handle backward compatibility
     elif args.gitlab_file_pos and args.toggl_file_pos:
